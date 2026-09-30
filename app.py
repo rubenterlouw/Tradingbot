@@ -121,6 +121,84 @@ start_background_services()
 
 
 # =========================================================
+# INTRABAR / BAR-CLOSE SETTING PARSER
+# =========================================================
+
+def parse_intrabar_setting(
+    value,
+    intrabar_words,
+    closed_bar_words,
+    default=True
+):
+
+    # -----------------------------------------------------
+    # REAL BOOLEAN
+    # -----------------------------------------------------
+
+    if isinstance(
+        value,
+        bool
+    ):
+
+        return value
+
+
+    # -----------------------------------------------------
+    # MISSING VALUE
+    # -----------------------------------------------------
+
+    if value is None:
+
+        return default
+
+
+    # -----------------------------------------------------
+    # NORMALIZE TEXT
+    # -----------------------------------------------------
+
+    text = str(
+        value
+    ).strip().lower()
+
+
+    # -----------------------------------------------------
+    # INTRABAR MODE
+    # -----------------------------------------------------
+
+    if text in intrabar_words:
+
+        return True
+
+
+    # -----------------------------------------------------
+    # BAR-CLOSE MODE
+    # -----------------------------------------------------
+
+    if text in closed_bar_words:
+
+        return False
+
+
+    # -----------------------------------------------------
+    # UNKNOWN VALUE
+    # -----------------------------------------------------
+
+    print(
+        "\n===== UNKNOWN INTRABAR SETTING ====="
+    )
+
+    print(
+        value
+    )
+
+    print(
+        f"Using default: {default}"
+    )
+
+    return default
+
+
+# =========================================================
 # WEBHOOK
 # =========================================================
 
@@ -140,6 +218,7 @@ def webhook():
             silent=True
         )
 
+
         if data is None:
 
             return jsonify(
@@ -154,8 +233,20 @@ def webhook():
             "\n===== ALERT RECEIVED ====="
         )
 
+
+        # -------------------------------------------------
+        # SAFE LOGGING
+        # -------------------------------------------------
+
+        safe_data = data.copy()
+
+        if "secret" in safe_data:
+
+            safe_data["secret"] = "**HIDDEN**"
+
+
         print(
-            data
+            safe_data
         )
 
 
@@ -321,6 +412,123 @@ def webhook():
 
 
         # -------------------------------------------------
+        # PARSE STOP TRIGGER MODE
+        # -------------------------------------------------
+
+        stoploss_intra_closed = (
+            parse_intrabar_setting(
+                data.get(
+                    "stoploss_intra_closed"
+                ),
+                intrabar_words={
+                    "intrabar stop",
+                    "intrabar",
+                    "true",
+                    "1"
+                },
+                closed_bar_words={
+                    "closed bar stop",
+                    "closed bar",
+                    "closed",
+                    "false",
+                    "0"
+                },
+                default=True
+            )
+        )
+
+
+        # -------------------------------------------------
+        # PARSE FIRST TARGET TRIGGER MODE
+        # -------------------------------------------------
+
+        first_target_intra_closed = (
+            parse_intrabar_setting(
+                data.get(
+                    "first_target_intra_closed"
+                ),
+                intrabar_words={
+                    "intrabar target",
+                    "intrabar",
+                    "true",
+                    "1"
+                },
+                closed_bar_words={
+                    "closed bar target",
+                    "closed bar",
+                    "closed",
+                    "false",
+                    "0"
+                },
+                default=True
+            )
+        )
+
+
+        # -------------------------------------------------
+        # PARSE TRAILING STOP TRIGGER MODE
+        # -------------------------------------------------
+
+        trail_intra_closed = (
+            parse_intrabar_setting(
+                data.get(
+                    "trail_intra_closed"
+                ),
+                intrabar_words={
+                    "intrabar trail",
+                    "intrabar",
+                    "true",
+                    "1"
+                },
+                closed_bar_words={
+                    "closed bar trail",
+                    "closed bar",
+                    "closed",
+                    "false",
+                    "0"
+                },
+                default=True
+            )
+        )
+
+
+        # -------------------------------------------------
+        # LOG TRIGGER MODES
+        # -------------------------------------------------
+
+        print(
+            "\n===== EXIT TRIGGER MODES ====="
+        )
+
+        print(
+            "Stop loss: "
+            + (
+                "INTRABAR"
+                if stoploss_intra_closed
+                else "BAR CLOSE"
+            )
+        )
+
+        print(
+            "First target: "
+            + (
+                "INTRABAR"
+                if first_target_intra_closed
+                else "BAR CLOSE"
+            )
+        )
+
+        print(
+            "Trail stop: "
+            + (
+                "INTRABAR"
+                if trail_intra_closed
+                else "BAR CLOSE"
+            )
+        )
+
+
+        # -------------------------------------------------
         # CREATE TRADE OBJECT
         # -------------------------------------------------
 
@@ -378,25 +586,16 @@ def webhook():
                 data["bar_time"]
             ),
 
-            stoploss_intra_closed=bool(
-                data.get(
-                    "stoploss_intra_closed",
-                    True
-                )
+            stoploss_intra_closed=(
+                stoploss_intra_closed
             ),
 
-            first_target_intra_closed=bool(
-                data.get(
-                    "first_target_intra_closed",
-                    True
-                )
+            first_target_intra_closed=(
+                first_target_intra_closed
             ),
 
-            trail_intra_closed=bool(
-                data.get(
-                    "trail_intra_closed",
-                    True
-                )
+            trail_intra_closed=(
+                trail_intra_closed
             )
         )
 
