@@ -1,28 +1,123 @@
-from flask import Flask, request, jsonify
+from flask import (
+    Flask,
+    request,
+    jsonify
+)
+
 import threading
 
 from config import WEBHOOK_SECRET
 
 from models.trade import Trade
 
-from engine.trade_manager import TradeManager
-from engine.monitor import TradeMonitor
+from engine.trade_manager import (
+    TradeManager
+)
 
-from bybit.helpers import normalize_symbol
+from engine.monitor import (
+    TradeMonitor
+)
 
+from engine.execution_worker import (
+    ExecutionWorker
+)
+
+from bybit.helpers import (
+    normalize_symbol
+)
+
+
+# =========================================================
+# FLASK
+# =========================================================
 
 app = Flask(__name__)
 
 
 # =========================================================
-# GLOBAL MANAGER / MONITOR
+# GLOBAL MANAGER / MONITOR / WORKER
 # =========================================================
 
 trade_manager = TradeManager()
 
+
 monitor = TradeMonitor(
     trade_manager
 )
+
+
+execution_worker = ExecutionWorker(
+    trade_manager
+)
+
+
+# =========================================================
+# BACKGROUND SERVICES
+# =========================================================
+
+background_services_started = False
+
+
+def start_background_services():
+
+    global background_services_started
+
+    if background_services_started:
+        return
+
+    background_services_started = True
+
+    print(
+        "\n"
+        "========================================"
+    )
+
+    print(
+        "          PTS BOT STARTING"
+    )
+
+    print(
+        "========================================"
+    )
+
+    # -----------------------------------------------------
+    # EXECUTION WORKER
+    # -----------------------------------------------------
+
+    execution_worker.start()
+
+    # -----------------------------------------------------
+    # TRADE MONITOR
+    # -----------------------------------------------------
+
+    monitor_thread = threading.Thread(
+        target=monitor.start,
+        daemon=True
+    )
+
+    monitor_thread.start()
+
+    print(
+        "\n===== PTS TRADE MONITOR STARTED ====="
+    )
+
+
+# =========================================================
+# IMPORTANT
+# =========================================================
+#
+# Gunicorn imports:
+#
+#     app:app
+#
+# Therefore this MUST NOT exist only inside:
+#
+#     if __name__ == "__main__":
+#
+# We use exactly one Gunicorn worker.
+# =========================================================
+
+start_background_services()
 
 
 # =========================================================
@@ -44,7 +139,6 @@ def webhook():
         data = request.get_json(
             silent=True
         )
-
 
         if data is None:
 
@@ -129,7 +223,6 @@ def webhook():
                 missing_fields
             )
 
-
             return jsonify(
                 {
                     "status": "error",
@@ -151,9 +244,21 @@ def webhook():
         # -------------------------------------------------
         # DUPLICATE PROTECTION
         # -------------------------------------------------
+        #
+        # Check both:
+        #
+        # 1. Signals already handled by TradeManager
+        # 2. Signals accepted but still waiting in queue
+        # -------------------------------------------------
 
-        if trade_manager.is_duplicate_signal(
-            signal_id
+        if (
+            trade_manager.is_duplicate_signal(
+                signal_id
+            )
+            or
+            execution_worker.is_pending(
+                signal_id
+            )
         ):
 
             print(
@@ -164,11 +269,12 @@ def webhook():
                 signal_id
             )
 
-
             return jsonify(
                 {
-                    "status": "duplicate_ignored",
-                    "signal_id": signal_id
+                    "status":
+                        "duplicate_ignored",
+                    "signal_id":
+                        signal_id
                 }
             ), 200
 
@@ -296,54 +402,62 @@ def webhook():
 
 
         # -------------------------------------------------
-        # START TRADE
+        # QUEUE TRADE
         # -------------------------------------------------
 
-        success = (
-            trade_manager.start_trade(
+        queued = (
+            execution_worker.queue_trade(
                 trade
             )
         )
 
 
-        if not success:
+        if not queued:
 
             print(
-                "\n===== TRADE NOT OPENED ====="
+                "\n===== TRADE QUEUE FAILED ====="
             )
-
 
             return jsonify(
                 {
                     "status": "error",
-                    "message": "Trade was not opened",
-                    "signal_id": signal_id
+                    "message":
+                        "Could not queue trade",
+                    "signal_id":
+                        signal_id
                 }
-            ), 400
+            ), 503
 
 
         # -------------------------------------------------
-        # SUCCESS
+        # FAST RESPONSE
+        # -------------------------------------------------
+        #
+        # TradingView receives this BEFORE Bybit execution
+        # finishes.
         # -------------------------------------------------
 
         print(
-            "\n===== WEBHOOK COMPLETE ====="
+            "\n===== WEBHOOK ACCEPTED ====="
         )
-
 
         return jsonify(
             {
-                "status": "success",
-                "symbol": bybit_symbol,
-                "direction": trade.direction,
-                "signal_id": signal_id
+                "status":
+                    "trade_queued",
+                "symbol":
+                    bybit_symbol,
+                "direction":
+                    trade.direction,
+                "signal_id":
+                    signal_id
             }
         ), 200
 
 
-    # =========================================================
+    # =====================================================
     # WEBHOOK ERROR
-    # =========================================================
+    # =====================================================
 
     except Exception as error:
 
@@ -355,7 +469,6 @@ def webhook():
             repr(error)
         )
 
-
         return jsonify(
             {
                 "status": "error",
@@ -365,18 +478,10 @@ def webhook():
 
 
 # =========================================================
-# START APPLICATION
+# LOCAL DEVELOPMENT
 # =========================================================
 
 if __name__ == "__main__":
-
-    monitor_thread = threading.Thread(
-        target=monitor.start,
-        daemon=True
-    )
-
-    monitor_thread.start()
-
 
     app.run(
         host="0.0.0.0",
